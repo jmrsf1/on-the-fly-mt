@@ -15,17 +15,13 @@ def load_model():
 
 
 
-
-
-
 def main():
     model, tokenizer = load_model()
 
-
+    
 
     #knn_wrapper = KNNWrapper(...)
     #knn_wrapper.break_into(model)
-    pass
 
 
 if __name__ == "__main__":

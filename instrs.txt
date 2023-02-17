@@ -1,0 +1,45 @@
+## 1) activate venv
+source ../venvs/KNNMT_hf/bin/activate
+
+
+## 2) Save a datastore
+python3 -u run_translation.py  \
+  --model_name_or_path t5-small  \
+  --dataset_name wmt16 --dataset_config_name ro-en \
+  --per_device_train_batch_size 4 --per_device_eval_batch_size=4 \
+  --output_dir checkpoints-translation/t5-small \
+  --source_lang en --target_lang ro \
+  --dstore_size 500 \
+  --dstore_dir checkpoints-translation/t5-small \
+   --save_knnlm_dstore --do_eval --eval_subset train \
+   --source_prefix "translate English to Romanian: "
+
+
+## 3) Build faiss index
+MODEL=t5-small
+python3 -u run_translation.py  \
+  --model_name_or_path t5-small \
+  --dataset_name wmt16 --dataset_config_name ro-en \
+  --per_device_train_batch_size 4 --per_device_eval_batch_size=4 \
+  --output_dir checkpoints-translation/t5-small \
+  --source_lang en --target_lang ro \
+  --dstore_size 500 \
+  --dstore_dir checkpoints-translation/t5-small \
+  --build_index
+
+
+## 4) Inference
+MODEL=t5-small
+python -u run_translation.py  \
+  --model_name_or_path t5-small \
+  --dataset_name wmt16 --dataset_config_name ro-en \
+  --per_device_eval_batch_size=4 \
+  --output_dir checkpoints-translation/t5-small \
+  --source_lang en --target_lang ro \
+  --do_eval \
+  --predict_with_generate \
+  --source_prefix "translate English to Romanian: " \
+  --dstore_size 500 \
+  --dstore_dir checkpoints-translation/t5-small \
+  --knn_temp 50 --k 16 --lmbda 0.25 \
+  --knn
