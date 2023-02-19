@@ -1,6 +1,9 @@
 ## 1) activate venv
 source ../venvs/KNNMT_hf/bin/activate
 
+## 1.5) Use script to transform text parallel corpus to json
+python3 dataset_processing.py 
+
 
 ## 2) Save a datastore
 python3 -u run_translation.py  \
@@ -12,6 +15,19 @@ python3 -u run_translation.py  \
   --dstore_size 500 \
   --dstore_dir checkpoints-translation/t5-small \
    --save_knnlm_dstore --do_eval --eval_subset train \
+   --source_prefix "translate English to Romanian: "
+
+"" 2.5) Save a datastore but using custom json validation file (list of translations with the 
+format: {"translation" : "src": "...", "trg": "..."} )
+python3 -u run_translation.py  \
+  --model_name_or_path t5-small  \
+  --validation_file ../datasets/lv-en/europarl-v7.lv-en.json --dataset_config_name ro-en \
+  --per_device_train_batch_size 4 --per_device_eval_batch_size=4 \
+  --output_dir checkpoints-translation/t5-small \
+  --source_lang en --target_lang ro \
+  --dstore_size 500 \
+  --dstore_dir checkpoints-translation/t5-small \
+   --save_knnlm_dstore --do_eval \
    --source_prefix "translate English to Romanian: "
 
 

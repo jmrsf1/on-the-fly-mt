@@ -25,7 +25,6 @@ class DIST(Enum):
         except KeyError:
             raise ValueError()
 
-
 class KEY_TYPE(Enum):
     last_ffn_input = auto()
     last_ffn_output = auto()
@@ -270,7 +269,6 @@ class KNNWrapper(object):
         }
 }
     
-
 class KNNSaver(object):
     def __init__(self, dstore_size, dstore_dir, dimension, knn_keytype=None):
         self.dstore_size = dstore_size
@@ -428,7 +426,6 @@ class ActivationCapturer(nn.Module):
             self.captured = input[0].detach()
         else:
             self.captured = output.detach()
-
 
 def get_dstore_path(dstore_dir, model_type, dstore_size, dimension):
     return f'{dstore_dir}/dstore_{model_type}_{dstore_size}_{dimension}'
