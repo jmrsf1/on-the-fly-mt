@@ -525,6 +525,7 @@ def main():
         model_inputs["labels"] = labels["input_ids"]
         return model_inputs
 
+    #Preprocessing training/eval/predict datasets
     if training_args.do_train:
         if "train" not in raw_datasets:
             raise ValueError("--do_train requires a train dataset")

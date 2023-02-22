@@ -20,6 +20,8 @@ def text_to_json(filename_src:str, filename_trg:str, source_lang:str, target_lan
         translation[source_lang] = content_src[i]
         translation[target_lang] = content_trg[i]
         translations.append({"translation" : translation})
+        if i >=100:
+            break
     
     #base path of europarl translation
     basepath = filename_src.split(".")[0] + "." + filename_src.split(".")[1]

@@ -36,7 +36,7 @@ class KEY_TYPE(Enum):
         except KeyError:
             raise ValueError()
 
-class KNNWrapper(object):
+class KNNWrapper(object):  
     def __init__(self, dstore_size, dstore_dir, dimension, 
             knn_sim_func=None, knn_keytype=None,
             no_load_keys=False, move_dstore_to_mem=False, knn_gpu=True,
@@ -72,7 +72,6 @@ class KNNWrapper(object):
             DIST.dot: KNNWrapper.dotprod,
         }
         self.dist_func = dist_type_to_dist_func[knn_sim_func] # l2 or dot product function
-
 
     def setup_faiss(self):
         if not self.dstore_dir:
@@ -228,13 +227,11 @@ class KNNWrapper(object):
         # returns: (batch, beams, time)
         return torch.sum((query.unsqueeze(-2) * keys), dim=-1)
 
-
     @staticmethod
     def interpolate(knn_log_probs, lm_log_probs, lmbda):
         interpolated = torch.logaddexp(
             lm_log_probs + np.log(1 - lmbda), 
             knn_log_probs + np.log(lmbda))
-
         return interpolated
 
     @staticmethod
