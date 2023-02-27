@@ -1,4 +1,5 @@
 import os
+import shutil
 
 import logging
 import time
@@ -41,7 +42,7 @@ class KNNWrapper(object):
             knn_sim_func=None, knn_keytype=None,
             no_load_keys=False, move_dstore_to_mem=False, knn_gpu=True,
             recompute_dists = False,
-            k=1024, lmbda=0.25, knn_temp=1.0, probe=32):
+            k=1024, lmbda=0.25, knn_temp=1.0, probe=32, on_the_fly=False, test_references=(), batch_size=4, tokenizer=None):    
         self.dstore_size = dstore_size
         self.dstore_dir = dstore_dir
         self.dimension = dimension
@@ -55,7 +56,7 @@ class KNNWrapper(object):
         self.recompute_dists = recompute_dists
         self.move_dstore_to_mem = move_dstore_to_mem
         self.knn_gpu = knn_gpu and torch.cuda.is_available() and torch.cuda.device_count() > 0
-
+       
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         self.prompt_input_ids = None
         self.keys = None
@@ -72,6 +73,19 @@ class KNNWrapper(object):
             DIST.dot: KNNWrapper.dotprod,
         }
         self.dist_func = dist_type_to_dist_func[knn_sim_func] # l2 or dot product function
+        #references to use for on-the-fly human feedback
+        self.on_the_fly = on_the_fly
+        if self.on_the_fly:
+            self.test_references = test_references
+            self.ref_counter = 0
+            self.batch_size = batch_size
+            self.tokenizer = tokenizer
+            self.dstore_idx = self.dstore_size
+            #If using gpu, a cpu index is needed because it's not possible to call add_with_ids for
+            #index in gpu as of this moment: https://github.com/facebookresearch/faiss/pull/2263
+            #This means tat on-the-fly can't be used with indexes in gpu as of yet
+            self.knn_gpu = False
+            #self.device = torch.device('cpu')
 
     def setup_faiss(self):
         if not self.dstore_dir:
@@ -96,15 +110,28 @@ class KNNWrapper(object):
         # and reconstructing key vectors given their ids
         # currently, this is implemented only for CPU indexes:
         # https://github.com/facebookresearch/faiss/issues/2181
-        cpu_index.make_direct_map()
+        #cpu_index.make_direct_map()
 
         keys_vals_prefix = get_dstore_path(self.dstore_dir, self.model.config.model_type, self.dstore_size, self.dimension)
+
         if not self.no_load_keys:
             self.keys = np.memmap(f'{keys_vals_prefix}_keys.npy', dtype=np.float16, mode='r',
                                   shape=(self.dstore_size, self.dimension))
         self.vals = np.memmap(f'{keys_vals_prefix}_vals.npy', dtype=np.int32, mode='r',
                               shape=(self.dstore_size, 1))
-        # self.vals = torch.from_numpy(self.vals).to(self.device)
+        
+        if self.on_the_fly:
+            otf_prefix = get_otf_dstore_path(self.dstore_dir, self.model.config.model_type, self.dstore_size, self.dimension)
+            Path(otf_prefix).parent.mkdir(parents=True, exist_ok=True)
+            self.keys = np.memmap(f'{otf_prefix}_keys.npy', dtype=np.float16, mode='w+',
+                                  shape=(self.dstore_size, self.dimension))
+            self.vals = np.memmap(f'{otf_prefix}_vals.npy', dtype=np.int32, mode='w+',
+                              shape=(self.dstore_size, 1))
+            
+            #create a onthefly index to be changed and to keep original index
+            otf_index_name = get_otf_index_path(self.dstore_dir, self.model.config.model_type, self.dstore_size, self.dimension)
+            index_name = get_index_path(self.dstore_dir, self.model.config.model_type, self.dstore_size, self.dimension)
+            shutil.copy(index_name, otf_index_name)
 
         # If you wish to load all the keys into memory
         # CAUTION: Only do this if your RAM can handle it!
@@ -154,6 +181,90 @@ class KNNWrapper(object):
         dists, knns = dists.to(self.device), knns.to(self.device)
         return dists, knns
 
+    def update_index(self, batch_time_size, num_keys_to_add_at_a_time=500):
+        """
+        """
+        index_name = get_otf_index_path(self.dstore_dir, self.model.config.model_type, self.dstore_size, self.dimension) 
+
+        logger.info('Adding Keys')
+        start = self.dstore_idx
+        start_time = time.time()
+        while start < self.dstore_size:
+            end = min(self.dstore_size, start + num_keys_to_add_at_a_time)
+            to_add = self.keys[start:end].copy()
+            self.index.add_with_ids(torch.tensor(to_add.astype(np.float32)), torch.arange(start, end))
+            start += num_keys_to_add_at_a_time
+            added_keys = start-self.dstore_idx
+            if (start % num_keys_to_add_at_a_time) == 0:
+                logger.info(f'Added {added_keys} tokens so far')
+                logger.info(f'Writing Index {added_keys}')
+                faiss.write_index(self.index, f'{index_name}')
+        
+        logger.info(f'Adding total {added_keys} keys')
+        logger.info(f'Adding took {time.time() - start_time} s')
+        logger.info(f'Writing Index to {index_name}')
+        start = time.time()
+        faiss.write_index(self.index, f'{index_name}')
+        logger.info(f'Writing index took {time.time() - start} s')
+        return 0
+    
+    def add_refs_datastore(self, datastore_dir, keys, values):
+        """
+        """
+        #number of tokens do add to datastore
+        batch_time_size = keys.shape[0]
+
+        #increase datastore size
+        old_size = self.dstore_size
+        self.dstore_size  += batch_time_size
+        otf_prefix = get_otf_dstore_path(self.dstore_dir, self.model.config.model_type, old_size, self.dimension)
+
+        self.keys = np.memmap(f'{otf_prefix}_keys.npy', dtype=np.float16, mode='r+',
+                                  shape=(self.dstore_size, self.dimension))
+        self.vals = np.memmap(f'{otf_prefix}_vals.npy', dtype=np.int32, mode='r+',
+                              shape=(self.dstore_size, 1))
+        
+        try:
+            self.keys[self.dstore_idx:(batch_time_size + self.dstore_idx)] = keys.cpu().numpy().astype(np.float16)
+            self.vals[self.dstore_idx:(batch_time_size + self.dstore_idx)] = values.unsqueeze(-1).cpu().numpy().astype(np.int32)
+            self.vals = torch.from_numpy(self.vals).to(self.device)
+        except ValueError as ex:
+            logger.error(f'Error saving datastore with mode {self.dstore_keys.mode}, did you try to save an already existing datastore?')
+            logger.error(f'Delete the files {self.dstore_keys.filename} and {self.dstore_vals.filename} and try again')
+            raise ex
+    
+        self.update_index(batch_time_size=batch_time_size)
+        new_name = get_otf_dstore_path(self.dstore_dir, self.model.config.model_type, self.dstore_size, self.dimension)
+        #Update dstore size of keys and values
+        os.rename(f'{otf_prefix}_keys.npy', f'{new_name}_keys.npy')
+        os.rename(f'{otf_prefix}_vals.npy', f'{new_name}_vals.npy')
+
+        #delete old faiss index
+        old_index_name = get_otf_index_path(self.dstore_dir, self.model.config.model_type, old_size, self.dimension) 
+        if os.path.isfile(old_index_name):
+            os.remove(old_index_name)
+        else:
+            # If it fails, inform the user.
+            logger.info(f"Error: {old_index_name} file not found")
+        
+        self.dstore_idx += batch_time_size
+        return 0
+
+    def get_refs_forward(self):
+        """
+        """
+        shift = 0 if self.is_encoder_decoder else 1
+        captured_keys = self.activation_capturer.captured.to(self.device)
+        if shift == 1:
+            captured_keys = captured_keys[:, :-shift]
+        captured_keys = captured_keys.flatten(0, 1) # (batch * time, dim)
+        captured_values = self.labels[:, shift:].flatten(0, 1).to(self.device) # (batch * time)
+    
+        nonpad_mask = captured_values != -100
+        keys = captured_keys[nonpad_mask]
+        values = captured_values[nonpad_mask]
+        return keys, values
+
     def pre_forward_hook(self, input_ids=None, attention_mask=None, labels=None, **kwargs):
         self.labels = labels
         return self.original_forward_func(input_ids=input_ids, labels=labels, attention_mask=attention_mask, **kwargs)
@@ -162,7 +273,7 @@ class KNNWrapper(object):
         batch, time_dim, vocab_size = output.shape
         shift = 0 if self.is_encoder_decoder else 1
         lm_logits = output
-        lm_logits = torch.nn.functional.log_softmax(lm_logits, dim=-1) # (batch, time, vocab)
+        lm_logits = torch.nn.functional.log_softmax(lm_logits, dim=-1).to(self.device) # (batch, time, vocab)
         queries = self.activation_capturer.captured # (batch, time, dim)
 
         if self.labels is None:
@@ -186,14 +297,21 @@ class KNNWrapper(object):
         
         neg_dists = -dists
         knn_log_probs, _ = self.knns_to_log_prob(knns, neg_dists)
-        
+
         interpolated_scores = KNNWrapper.interpolate(knn_log_probs, lm_logits, self.lmbda) # (nonpad, vocab)
         output[nonpad_mask] = interpolated_scores
+
+        #Perform on-the-fly human feedback loop
+        if self.on_the_fly:
+            if self.labels is not None:
+                keys, values = self.get_refs_forward()
+                self.add_refs_datastore(None, keys, values)
+
         return output 
 
-    def knns_to_log_prob(self, knns, neg_dists):
+    def knns_to_log_prob(self, knns, neg_dists): 
         probs = torch.nn.functional.softmax(neg_dists / self.knn_temperature, dim=-1)
-        vals_at_knns = self.vals[knns].squeeze(-1) # (nonpad batch * time, k)
+        vals_at_knns = self.vals[knns].squeeze(-1).to(torch.int64) #(nonpad batch * time, k)
         knn_log_probs = torch.full(size=(vals_at_knns.shape[:-1] + (self.vocab_size,)), fill_value=0.0).to(self.device) \
             .scatter_add(dim=-1, index=vals_at_knns, src=probs).log() # (nonpad_batch * time, vocab)
         knn_log_probs = torch.nan_to_num(knn_log_probs, nan=None, neginf=-10000.0)
@@ -267,7 +385,7 @@ class KNNWrapper(object):
 }
     
 class KNNSaver(object):
-    def __init__(self, dstore_size, dstore_dir, dimension, knn_keytype=None):
+    def __init__(self, dstore_size, dstore_dir, dimension, knn_keytype=None, tokenizer=None):
         self.dstore_size = dstore_size
         self.dstore_dir = dstore_dir
         self.dimension = dimension
@@ -286,6 +404,7 @@ class KNNSaver(object):
 
         logger.info(f'keytype being saved: {self.knn_keytype}')
         logger.info('Saving fp16')
+        self.tokenizer = tokenizer
 
     def break_into(self, model):
         self.model = model
@@ -326,17 +445,18 @@ class KNNSaver(object):
 
     def post_forward_hook(self, module, input, output):
         shift = 0 if self.is_encoder_decoder else 1
-        captured_keys = self.activation_capturer.captured
+        captured_keys = self.activation_capturer.captured.to(self.device)
         if shift == 1:
             captured_keys = captured_keys[:, :-shift]
         captured_keys = captured_keys.flatten(0, 1) # (batch * time, dim)
-        captured_values = self.labels[:, shift:].flatten(0, 1) # (batch * time)
+        captured_values = self.labels[:, shift:].flatten(0, 1).to(self.device) # (batch * time)
 
         nonpad_mask = captured_values != -100
         keys = captured_keys[nonpad_mask]
         values = captured_values[nonpad_mask]
 
         batch_time_size = keys.shape[0]
+
         # if shape[0] == args.tokens_per_sample:
         if self.dstore_idx + batch_time_size > self.dstore_size:
             batch_time_size = max(self.dstore_size - self.dstore_idx, 0)
@@ -408,6 +528,7 @@ class KNNSaver(object):
         
     def get_metrics(self):
         return {}
+    
 
 class ActivationCapturer(nn.Module):
     def __init__(self, layer, capture_input=False):
@@ -416,8 +537,7 @@ class ActivationCapturer(nn.Module):
         self.capture_input = capture_input
 
         self.captured = None
-
-    
+  
     def forward(self, module, input, output):
         if self.capture_input:
             self.captured = input[0].detach()
@@ -427,5 +547,11 @@ class ActivationCapturer(nn.Module):
 def get_dstore_path(dstore_dir, model_type, dstore_size, dimension):
     return f'{dstore_dir}/dstore_{model_type}_{dstore_size}_{dimension}'
 
+def get_otf_dstore_path(dstore_dir, model_type, dstore_size, dimension):
+    return f'{dstore_dir}/on-the-fly/dstore_{model_type}_{dstore_size}_{dimension}'
+
 def get_index_path(dstore_dir, model_type, dstore_size, dimension):
     return f'{dstore_dir}/index_{model_type}_{dstore_size}_{dimension}.indexed'
+
+def get_otf_index_path(dstore_dir, model_type, dstore_size, dimension):
+    return f'{dstore_dir}/on-the-fly/index_{model_type}_{dstore_size}_{dimension}.indexed'

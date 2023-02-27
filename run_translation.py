@@ -274,16 +274,9 @@ class KNNArguments:
     move_dstore_to_mem: bool = field(default=True)
     no_load_keys: bool = field(default=True)
     recompute_dists: bool = field(default=False)
+    on_the_fly: bool = field(default=False)
 
-    ### RetoMaton args:
-    #retomaton: bool = field(default=False)
-    #cluster_dstore: bool = field(default=False)
-    #no_pointer: bool = field(default=False)
-    #min_knns: int = field(default=1)
-    #max_knns: int = field(default=1024)
-    #num_clusters: int = field(default=1000000)
-    #sample_size: int = field(default=40000000)
-    #members: str = field(default=None)
+
 
 def main():
     # See all possible arguments in src/transformers/training_args.py
@@ -387,6 +380,9 @@ def main():
             cache_dir=model_args.cache_dir,
             use_auth_token=True if model_args.use_auth_token else None,
         )
+    # For on-the-fly human feedback loop
+    test_references = tuple([raw_datasets["test"][i]["translation"][f"{data_args.target_lang}"] for i in range(len(raw_datasets["test"]))])
+
     # See more about loading any type of standard or custom dataset (from files, python dict, pandas DataFrame, etc) at
     # https://huggingface.co/docs/datasets/loading_datasets.html.
 
@@ -435,22 +431,14 @@ def main():
     dimension = model.config.hidden_size
     knn_wrapper = None
     knn_args.seed = training_args.seed
-    #if knn_args.retomaton or knn_args.cluster_dstore:
-    #    knn_wrapper = RetomatonWrapper(dstore_size=knn_args.dstore_size, dstore_dir=knn_args.dstore_dir, 
-    #        dimension=dimension, 
-    #        knn_sim_func=knn_args.knn_sim_func, knn_keytype=knn_args.knn_keytype,
-    #        no_load_keys=knn_args.no_load_keys, move_dstore_to_mem=knn_args.move_dstore_to_mem, knn_gpu=knn_args.knn_gpu,
-    #        recompute_dists=knn_args.recompute_dists,
-    #        k=knn_args.k, lmbda=knn_args.lmbda, knn_temp=knn_args.knn_temp, probe=knn_args.probe,
-    #        no_pointer=knn_args.no_pointer, min_knns=knn_args.min_knns, max_knns=knn_args.max_knns,
-    #        members=knn_args.members)
     if knn_args.knn:
         knn_wrapper = KNNWrapper(dstore_size=knn_args.dstore_size, dstore_dir=knn_args.dstore_dir, 
             dimension= dimension, 
             knn_sim_func=knn_args.knn_sim_func, knn_keytype=knn_args.knn_keytype,
             no_load_keys=knn_args.no_load_keys, move_dstore_to_mem=knn_args.move_dstore_to_mem, knn_gpu=knn_args.knn_gpu,
             recompute_dists=knn_args.recompute_dists,
-            k=knn_args.k, lmbda=knn_args.lmbda, knn_temp=knn_args.knn_temp, probe=knn_args.probe)
+            k=knn_args.k, lmbda=knn_args.lmbda, knn_temp=knn_args.knn_temp, probe=knn_args.probe,
+            on_the_fly=knn_args.on_the_fly, test_references=test_references, batch_size=training_args.per_device_eval_batch_size, tokenizer=tokenizer)
     elif knn_args.save_knnlm_dstore or knn_args.build_index:
         training_args.predict_with_generate = False
         knn_wrapper = KNNSaver(dstore_size=knn_args.dstore_size, dstore_dir=knn_args.dstore_dir, 
@@ -728,8 +716,8 @@ def main():
     if knn_args.build_index:
         knn_wrapper.build_index()
 
-    if knn_args.cluster_dstore:
-        knn_wrapper.cluster_dstore(num_clusters=knn_args.num_clusters, sample_size=knn_args.sample_size, model=model)
+    #if knn_args.cluster_dstore:
+    #    knn_wrapper.cluster_dstore(num_clusters=knn_args.num_clusters, sample_size=knn_args.sample_size, model=model)
     
     if knn_wrapper is not None:
         knn_wrapper.break_out()

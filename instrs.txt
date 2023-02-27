@@ -4,17 +4,16 @@ source ../venvs/KNNMT_hf/bin/activate
 ## 1.5) Use script to transform text parallel corpus to json
 python3 dataset_processing.py 
 
-
 ## 2) Save a datastore
-python3 -u run_translation.py  \
+CUDA_VISIBLE_DEVICES=2 python3 -u run_translation.py  \
   --model_name_or_path t5-small  \
   --dataset_name wmt16 --dataset_config_name ro-en \
   --per_device_train_batch_size 4 --per_device_eval_batch_size=4 \
   --output_dir checkpoints-translation/t5-small \
   --source_lang en --target_lang ro \
-  --dstore_size 500 \
+  --dstore_size 85108 \
   --dstore_dir checkpoints-translation/t5-small \
-   --save_knnlm_dstore --do_eval --eval_subset train \
+   --save_knnlm_dstore --do_eval --eval_subset validation \
    --source_prefix "translate English to Romanian: "
 
 "" 2.5) Save a datastore but using custom json validation file (list of translations with the 
@@ -39,23 +38,44 @@ python3 -u run_translation.py  \
   --per_device_train_batch_size 4 --per_device_eval_batch_size=4 \
   --output_dir checkpoints-translation/t5-small \
   --source_lang en --target_lang ro \
-  --dstore_size 500 \
+  --dstore_size 85108 \
   --dstore_dir checkpoints-translation/t5-small \
   --build_index
 
 
 ## 4) Inference
 MODEL=t5-small
-python -u run_translation.py  \
+CUDA_VISIBLE_DEVICES=2 python -u run_translation.py  \
   --model_name_or_path t5-small \
   --dataset_name wmt16 --dataset_config_name ro-en \
   --per_device_eval_batch_size=4 \
   --output_dir checkpoints-translation/t5-small \
   --source_lang en --target_lang ro \
-  --do_eval \
+  --do_predict \
   --predict_with_generate \
   --source_prefix "translate English to Romanian: " \
-  --dstore_size 500 \
+  --dstore_size 85108 \
   --dstore_dir checkpoints-translation/t5-small \
   --knn_temp 50 --k 16 --lmbda 0.25 \
   --knn
+
+## 5) Inference On-the-fly
+-> Every test set batch translated is inserted inside the datastore
+to mimic a human feedback loop [assuming that there are test set references]. This loop corrections
+are used on every further translation until end of run.
+-> The index and datastores are put on an 'on-the-fly' named folder inside 'dstore_dir'. To use this datastore
+on future runs just copy datastores and indexes to 'dstore_dir' and delete on-the-fly.
+
+CUDA_VISIBLE_DEVICES=2 python -u run_translation.py  \
+  --model_name_or_path t5-small \
+  --dataset_name wmt16 --dataset_config_name ro-en \
+  --per_device_eval_batch_size=4 \
+  --output_dir checkpoints-translation/t5-small \
+  --source_lang en --target_lang ro \
+  --do_predict \
+  --predict_with_generate \
+  --source_prefix "translate English to Romanian: " \
+  --dstore_size 85108 \
+  --dstore_dir checkpoints-translation/t5-small \
+  --knn_temp 50 --k 16 --lmbda 0.25 \
+  --knn --on_the_fly
