@@ -2,7 +2,7 @@
 source ../venvs/KNNMT_hf/bin/activate
 
 ## 1.5) Use script to transform text parallel corpus to json
-python3 dataset_processing.py 
+python3 dataset_processing.py --basepath </path/to/datasets>
 
 ## 2) Save a datastore
 CUDA_VISIBLE_DEVICES=2 python3 -u run_translation.py  \
@@ -79,3 +79,17 @@ CUDA_VISIBLE_DEVICES=2 python -u run_translation.py  \
   --dstore_dir checkpoints-translation/t5-small \
   --knn_temp 50 --k 16 --lmbda 0.25 \
   --knn --on_the_fly
+
+##6) Add corrections to datastore
+->Provide the "corrections.src-trg.json" file (see dataset_processing.py for more details about correct format)
+->These corrections are added to the main datastore in dstore_dir, overwritting it
+
+CUDA_VISIBLE_DEVICES=2 python -u run_translation.py  \
+  --model_name_or_path t5-small \
+  --corrections /home/joaofonseca/on-the-fly-mt/corrections/corrections.en-ro.json --dataset_config_name ro-en \
+  --per_device_eval_batch_size=4 \
+  --output_dir checkpoints-translation/t5-small \
+  --source_lang en --target_lang ro \
+  --source_prefix "translate English to Romanian: " \
+  --dstore_size 85108 \
+  --dstore_dir checkpoints-translation/t5-small 

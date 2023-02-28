@@ -50,7 +50,7 @@ from transformers.trainer_utils import get_last_checkpoint
 # from transformers.utils import check_min_version #, send_example_telemetry
 from transformers.utils.versions import require_version
 
-from knnlm import KNNWrapper, KNNSaver, KEY_TYPE, DIST
+from knnlm import KNNWrapper, KNNSaver, KNNCorrections, KEY_TYPE, DIST
 
 # Will error if the minimal version of Transformers is not installed. Remove at your own risks.
 # check_min_version("4.21.0.dev0")
@@ -126,6 +126,10 @@ class DataTrainingArguments:
         default=None,
         metadata={"help": "An optional input test data file to evaluate the metrics (sacreblue) on a jsonlines file."},
     )
+    corrections: Optional[str] = field(
+        default="",
+        metadata={"help": "A file with the corrections to add to datastore"}
+        )
     overwrite_cache: bool = field(
         default=False, metadata={"help": "Overwrite the cached training and evaluation sets"}
     )
@@ -231,8 +235,8 @@ class DataTrainingArguments:
     patience: int = field(default=None)
 
     def __post_init__(self):
-        if self.dataset_name is None and self.train_file is None and self.validation_file is None:
-            raise ValueError("Need either a dataset name or a training/validation file.")
+        if self.dataset_name is None and self.train_file is None and self.validation_file is None and self.corrections is None:
+            raise ValueError("Need either a dataset name or a training/validation/corrections file.")
         elif self.source_lang is None or self.target_lang is None:
             raise ValueError("Need to specify the source language and the target language.")
 
@@ -374,14 +378,18 @@ def main():
         if data_args.test_file is not None:
             data_files["test"] = data_args.test_file
             extension = data_args.test_file.split(".")[-1]
+        if data_args.corrections is not None:
+            data_files["corrections"] = data_args.corrections
+            extension = data_args.corrections.split(".")[-1]
         raw_datasets = load_dataset(
             extension,
             data_files=data_files,
             cache_dir=model_args.cache_dir,
             use_auth_token=True if model_args.use_auth_token else None,
         )
-    # For on-the-fly human feedback loop
-    test_references = tuple([raw_datasets["test"][i]["translation"][f"{data_args.target_lang}"] for i in range(len(raw_datasets["test"]))])
+    if knn_args.on_the_fly:
+        # For on-the-fly human feedback loop
+        test_references = tuple([raw_datasets["test"][i]["translation"][f"{data_args.target_lang}"] for i in range(len(raw_datasets["test"]))])
 
     # See more about loading any type of standard or custom dataset (from files, python dict, pandas DataFrame, etc) at
     # https://huggingface.co/docs/datasets/loading_datasets.html.
@@ -438,11 +446,13 @@ def main():
             no_load_keys=knn_args.no_load_keys, move_dstore_to_mem=knn_args.move_dstore_to_mem, knn_gpu=knn_args.knn_gpu,
             recompute_dists=knn_args.recompute_dists,
             k=knn_args.k, lmbda=knn_args.lmbda, knn_temp=knn_args.knn_temp, probe=knn_args.probe,
-            on_the_fly=knn_args.on_the_fly, test_references=test_references, batch_size=training_args.per_device_eval_batch_size, tokenizer=tokenizer)
+            on_the_fly=knn_args.on_the_fly, test_references=test_references, batch_size=training_args.per_device_eval_batch_size)
     elif knn_args.save_knnlm_dstore or knn_args.build_index:
         training_args.predict_with_generate = False
         knn_wrapper = KNNSaver(dstore_size=knn_args.dstore_size, dstore_dir=knn_args.dstore_dir, 
             dimension=dimension, knn_keytype=knn_args.knn_keytype)
+    elif data_args.corrections:
+        knn_wrapper = KNNCorrections(dstore_size=knn_args.dstore_size, dstore_dir=knn_args.dstore_dir, dimension=dimension, knn_keytype=knn_args.knn_keytype, probe=knn_args.probe)
     
     if knn_wrapper is not None:
         knn_wrapper.break_into(model)
@@ -455,6 +465,8 @@ def main():
         column_names = raw_datasets["validation"].column_names
     elif training_args.do_predict:
         column_names = raw_datasets["test"].column_names
+    elif data_args.corrections:
+        column_names = raw_datasets["corrections"].column_names
     elif knn_args.build_index:
         logger.info("Building index")
     else:
@@ -577,6 +589,30 @@ def main():
                 desc="Running tokenizer on prediction dataset",
             )
 
+    if data_args.corrections:
+        max_target_length = data_args.val_max_target_length
+        if "corrections" not in raw_datasets:
+            raise ValueError("--do_eval requires the corrections dataset")
+        corrections_dataset = raw_datasets["corrections"]
+        if data_args.max_eval_samples is not None:
+            max_eval_samples = min(len(corrections_dataset), data_args.max_eval_samples)
+            corrections_dataset = corrections_dataset.select(range(max_eval_samples))
+        with training_args.main_process_first(desc="corrections dataset map pre-processing"):
+            corrections_dataset = corrections_dataset.map(
+                preprocess_function,
+                batched=True,
+                num_proc=data_args.preprocessing_num_workers,
+                remove_columns=column_names,
+                load_from_cache_file=not data_args.overwrite_cache,
+                desc="Running tokenizer on corrections dataset",
+            )
+        total_eval_tokens = 0        
+        for chunk in corrections_dataset['labels']:
+            total_eval_tokens += len([x for x in chunk if x != -100])
+        logger.info(f'[corrections] Total eval tokens: {total_eval_tokens}')
+        if knn_args.dstore_size is None and knn_args.save_knnlm_dstore:
+            knn_args.dstore_size = total_eval_tokens
+    
     # Data collator
     label_pad_token_id = -100 if data_args.ignore_pad_token_for_loss else tokenizer.pad_token_id
     if data_args.pad_to_max_length:
@@ -619,13 +655,12 @@ def main():
         result = {k: round(v, 4) for k, v in result.items()}
         return result
 
-
     # Initialize our Trainer
     trainer = Seq2SeqTrainer(
         model=model,
         args=training_args,
         train_dataset=train_dataset if training_args.do_train else None,
-        eval_dataset=eval_dataset if training_args.do_eval else None,
+        eval_dataset=eval_dataset if training_args.do_eval else corrections_dataset if data_args.corrections else None,
         tokenizer=tokenizer,
         data_collator=data_collator,
         compute_metrics=compute_metrics if training_args.predict_with_generate else None,
@@ -660,9 +695,10 @@ def main():
         else data_args.val_max_target_length
     )
     num_beams = data_args.num_beams if data_args.num_beams is not None else training_args.generation_num_beams
-    if training_args.do_eval:
+    if training_args.do_eval or data_args.corrections:
         logger.info("*** Evaluate ***")
-
+        if data_args.corrections:
+            eval_dataset = corrections_dataset
         metrics = trainer.evaluate(max_length=max_length, num_beams=num_beams, metric_key_prefix="eval")
         max_eval_samples = data_args.max_eval_samples if data_args.max_eval_samples is not None else len(eval_dataset)
         metrics["eval_samples"] = min(max_eval_samples, len(eval_dataset))
