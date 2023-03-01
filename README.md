@@ -1,7 +1,7 @@
 # On-the-fly Machine Translation
 
 <img
-  src="https://github.com/jmrsf1/on-the-fly-mt/blob/main/on-the-fly.png"
+  src="https://github.com/jmrsf1/on-the-fly-mt/blob/main/images/on-the-fly.png"
   alt="Alt text"
   title="On-the-fly Machine Translation"
   style="display: block; width: 425px;">
@@ -108,8 +108,9 @@ on future runs just copy datastore and index to 'dstore_dir' after the run and d
   ```
 
 ## 6) Add corrections to datastore
-->Provide the "corrections.src-trg.json" file (see dataset_processing.py for more details about correct format)
-->These corrections are added to the main datastore in dstore_dir, overwritting it
+-> Provide the "corrections.'src'-'trg'.json" file (see dataset_preprocessing.py for more details about correct format) which should be inside of folder <corrections/>.
+-> These corrections are added to the 'dstore_num' datastore in dstore_dir, overwritting it
+with new version with corrections included.
 
 ```
   CUDA_VISIBLE_DEVICES=1 python -u run_translation.py  \
@@ -119,7 +120,7 @@ on future runs just copy datastore and index to 'dstore_dir' after the run and d
   --output_dir checkpoints-translation/t5-small \
   --source_lang en --target_lang ro \
   --source_prefix "translate English to Romanian: " \
-  --dstore_size 85108 \
+  --dstore_size 85108 --dstore_num 1\
   --dstore_dir checkpoints-translation/t5-small
   ```
   
