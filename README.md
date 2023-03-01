@@ -138,6 +138,7 @@ This repository implements:
   year = {2020},
   copyright = {arXiv.org perpetual, non-exclusive license}
 }
+```
   and is built-on the implementation in https://github.com/neulab/knn-transformers.
 
-```
+
