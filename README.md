@@ -1,6 +1,10 @@
 # On-the-fly Machine Translation
 
-![alt text](https://github.com/jmrsf1/on-the-fly-mt/blob/main/on-the-fly.pdf "On-the-fly Machine Translation")
+<img
+  src="https://github.com/jmrsf1/on-the-fly-mt/blob/main/on-the-fly.png"
+  alt="Alt text"
+  title="On-the-fly Machine Translation"
+  style="display: block; width: 425px;">
 
 ## 1) Preprocess custom dataset (if not using huffing face datasets)
 -> Use script to transform custom text parallel corpus (2 .txt files with source 
