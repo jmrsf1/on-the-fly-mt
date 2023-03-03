@@ -260,12 +260,13 @@ class KNNArguments:
     """
     knn: bool = field(default=False)
     knn_gpu: bool = field(default=True)
-    dstore_size: int = field(default=19254850, metadata={"help": "The size of the dstore."})
+    dstore_sizes: str = field(default="[85108]", metadata={"help": "The size of the dstores. Format example: \"[95108,85193]\" for 2 dstores (no spaces)"}) 
+    dstore_size: int = field(default=85108, metadata={"help": "The size of the dstore to be added"})
     knn_keytype: KEY_TYPE.from_string = field(default=KEY_TYPE.last_ffn_input)
-    save_knnlm_dstore: bool = field(default=False)
+    save_knnmt_dstore: bool = field(default=False)
     dstore_dir: str = field(default="checkpoints")
     knn_sim_func: DIST.from_string = field(default=DIST.l2)
-    lmbda: float = field(default=0.25)
+    lmbdas: str = field(default="[[0.25]]")
     k: int = field(default=32)
     knn_temp: float = field(default=50)
     # Args for building the faiss index:
@@ -279,6 +280,7 @@ class KNNArguments:
     no_load_keys: bool = field(default=True)
     recompute_dists: bool = field(default=False)
     on_the_fly: bool = field(default=False)
+    dstore_num: int = field(default=1, metadata={"help": "Datastore number"})
 
 
 
@@ -390,6 +392,8 @@ def main():
     if knn_args.on_the_fly:
         # For on-the-fly human feedback loop
         test_references = tuple([raw_datasets["test"][i]["translation"][f"{data_args.target_lang}"] for i in range(len(raw_datasets["test"]))])
+    else:
+        test_references = ""
 
     # See more about loading any type of standard or custom dataset (from files, python dict, pandas DataFrame, etc) at
     # https://huggingface.co/docs/datasets/loading_datasets.html.
@@ -440,19 +444,19 @@ def main():
     knn_wrapper = None
     knn_args.seed = training_args.seed
     if knn_args.knn:
-        knn_wrapper = KNNWrapper(dstore_size=knn_args.dstore_size, dstore_dir=knn_args.dstore_dir, 
+        knn_wrapper = KNNWrapper(dstore_sizes=knn_args.dstore_sizes, dstore_dir=knn_args.dstore_dir, 
             dimension= dimension, 
             knn_sim_func=knn_args.knn_sim_func, knn_keytype=knn_args.knn_keytype,
             no_load_keys=knn_args.no_load_keys, move_dstore_to_mem=knn_args.move_dstore_to_mem, knn_gpu=knn_args.knn_gpu,
             recompute_dists=knn_args.recompute_dists,
-            k=knn_args.k, lmbda=knn_args.lmbda, knn_temp=knn_args.knn_temp, probe=knn_args.probe,
-            on_the_fly=knn_args.on_the_fly, test_references=test_references, batch_size=training_args.per_device_eval_batch_size)
-    elif knn_args.save_knnlm_dstore or knn_args.build_index:
+            k=knn_args.k, lmbdas=knn_args.lmbdas, knn_temp=knn_args.knn_temp, probe=knn_args.probe,
+            on_the_fly=knn_args.on_the_fly, test_references=test_references, dstore_num=knn_args.dstore_num)
+    elif knn_args.build_index or knn_args.save_knnmt_dstore:
         training_args.predict_with_generate = False
         knn_wrapper = KNNSaver(dstore_size=knn_args.dstore_size, dstore_dir=knn_args.dstore_dir, 
-            dimension=dimension, knn_keytype=knn_args.knn_keytype)
+            dimension=dimension, knn_keytype=knn_args.knn_keytype, dstore_num=knn_args.dstore_num)
     elif data_args.corrections:
-        knn_wrapper = KNNCorrections(dstore_size=knn_args.dstore_size, dstore_dir=knn_args.dstore_dir, dimension=dimension, knn_keytype=knn_args.knn_keytype, probe=knn_args.probe)
+        knn_wrapper = KNNCorrections(dstore_size=knn_args.dstore_size, dstore_dir=knn_args.dstore_dir, dimension=dimension, knn_keytype=knn_args.knn_keytype, probe=knn_args.probe, dstore_num=knn_args.dstore_num)
     
     if knn_wrapper is not None:
         knn_wrapper.break_into(model)
@@ -568,8 +572,8 @@ def main():
         for chunk in eval_dataset['labels']:
             total_eval_tokens += len([x for x in chunk if x != -100])
         logger.info(f'[{data_args.eval_subset}] Total eval tokens: {total_eval_tokens}')
-        if knn_args.dstore_size is None and knn_args.save_knnlm_dstore:
-            knn_args.dstore_size = total_eval_tokens
+        #if knn_args.dstore_sizes is None and knn_args.save_knnlm_dstore:
+        #    knn_args.dstore_sizes = total_eval_tokens
 
     if training_args.do_predict:
         max_target_length = data_args.val_max_target_length
@@ -610,8 +614,8 @@ def main():
         for chunk in corrections_dataset['labels']:
             total_eval_tokens += len([x for x in chunk if x != -100])
         logger.info(f'[corrections] Total eval tokens: {total_eval_tokens}')
-        if knn_args.dstore_size is None and knn_args.save_knnlm_dstore:
-            knn_args.dstore_size = total_eval_tokens
+        #if knn_args.dstore_size is None and knn_args.save_knnlm_dstore:
+        #    knn_args.dstore_size = total_eval_tokens
     
     # Data collator
     label_pad_token_id = -100 if data_args.ignore_pad_token_for_loss else tokenizer.pad_token_id
@@ -752,19 +756,10 @@ def main():
     if knn_args.build_index:
         knn_wrapper.build_index()
 
-    #if knn_args.cluster_dstore:
-    #    knn_wrapper.cluster_dstore(num_clusters=knn_args.num_clusters, sample_size=knn_args.sample_size, model=model)
-    
     if knn_wrapper is not None:
         knn_wrapper.break_out()
     
     return results
-
-
-def _mp_fn(index):
-    # For xla_spawn (TPUs)
-    main()
-
 
 if __name__ == "__main__":
     main()

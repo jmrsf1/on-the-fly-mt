@@ -6,6 +6,15 @@
   title="On-the-fly Machine Translation"
   style="display: block; width: 425px;">
 
+Added functionalities of using custom dataset, using and creating multiple datastores, perform on-the-fly machine translation (i.e., add a corrections dataset to one of the datastores) or perform a 'on-the-fly inference' which, for every performed translation, adds the correspondent references to the datastore on-the-fly to be applied when inference has a sequential nature.
+
+#### Multiple Datastores: 
+-> Create datastores offline (use <dstore_num> equal to 1 when creating the first datastore, <dstore_num> equal to 2 when creating the second one and so on). Different datastores will have this <dstore_num> variable in their name (serving as an index).
+-> Provide <lmbdas> variable in the following format: <[[λ1],[λ2],[λ3],...]> (a weight to each datastore).
+-> When in inference, the variable <dstore_num> is the number of datastores to be used (if it is equal to 3, datastores 1,2 and 3 will be considered).
+-> All datastores scores are linearly interpolated with the model's prediction using the given weights.
+-> Provide <dstore_sizes> (instead of <dstore_size>) in the format: <[size_ds1,size_ds2,size_ds3,...]>
+
 ## 1) Preprocess custom dataset (if not using huffing face datasets)
 -> Use script to transform custom text parallel corpus (2 .txt files with source 
 and target corpus respectively) to the following json format:
@@ -15,20 +24,20 @@ and target corpus respectively) to the following json format:
 
 
 ## 2) Save a datastore to <dstore_dir>.
--> 'dstore_num' is the total number of datastores
-in <dstore_dir> after the insertion of the current one.
+-> <dstore_num> is the index of the current datastore being added. If the first datastore is being created, <dstore_num> should be 1, and so on.
+-> <dstore_size> is the size of the current datastore being added.
+-> <eval_subset> is the subset to be added to datastore.
 
 ``` 
-  CUDA_VISIBLE_DEVICES=1 python3 -u run_translation.py  \
+  CUDA_VISIBLE_DEVICES=0 python3 -u run_translation.py  \
   --model_name_or_path t5-small  \
   --dataset_name wmt16 --dataset_config_name ro-en \
   --per_device_train_batch_size 4 --per_device_eval_batch_size=4 \
   --output_dir checkpoints-translation/t5-small \
   --source_lang en --target_lang ro \
-  --dstore_size 85108 \
+  --dstore_size 85108 --dstore_num 1 \
   --dstore_dir checkpoints-translation/t5-small \
-   --save_knnlm_dstore --do_eval --eval_subset validation \
-   --dstore_num 1 \
+   --save_knnmt_dstore --do_eval --eval_subset validation \
    --source_prefix "translate English to Romanian: "
   ```
 
@@ -41,15 +50,14 @@ in <dstore_dir> after the insertion of the current one.
   --per_device_train_batch_size 4 --per_device_eval_batch_size=4 \
   --output_dir checkpoints-translation/t5-small \
   --source_lang en --target_lang ro \
-  --dstore_size 500 \
+  --dstore_size 85108 --dstore_num 1 \
   --dstore_dir checkpoints-translation/t5-small \
    --save_knnlm_dstore --do_eval \
-   --dstore_num 1 \
    --source_prefix "translate English to Romanian: "
   ```
 
 
-## 3) Build faiss index for datastore 'dstore_num'
+## 3) Build faiss index for datastore <dstore_num>
 
 ```
   python3 -u run_translation.py  \
@@ -58,15 +66,15 @@ in <dstore_dir> after the insertion of the current one.
   --per_device_train_batch_size 4 --per_device_eval_batch_size=4 \
   --output_dir checkpoints-translation/t5-small \
   --source_lang en --target_lang ro \
-  --dstore_size 85108 \
+  --dstore_size 85108 --dstore_num 1 \
   --dstore_dir checkpoints-translation/t5-small \
-  --dstore_num 1 \
   --build_index 
   ```
 
 
-## 4) Inference using all datastores up to 'dstore_num'
-
+## 4) Inference using all datastores up to <dstore_num>
+-> <lmbdas> variable is of the following format: <[[λ1],[λ2],[λ3],...]> (no spaces) according to <dstore_num> (if <dstore_num> is 2, you must provide 'lmbdas' as <[[λ1],[λ2]]> )
+-> When inferring, use <dstore_sizes> (instead of <dstore_size>) in the format: <[size_ds1,size_ds2,size_ds3,...]>.
 ```
   CUDA_VISIBLE_DEVICES=1 python -u run_translation.py  \
   --model_name_or_path t5-small \
@@ -77,10 +85,9 @@ in <dstore_dir> after the insertion of the current one.
   --do_predict \
   --predict_with_generate \
   --source_prefix "translate English to Romanian: " \
-  --dstore_size 85108 \
+  --dstore_sizes [85108,85108] --dstore_num 2 \
   --dstore_dir checkpoints-translation/t5-small \
-  --dstore_num 1 \
-  --knn_temp 50 --k 16 --lmbda 0.25 \
+  --knn_temp 50 --k 16 --lmbdas [[0.1],[0.8]] \
   --knn 
   ```
 
@@ -88,8 +95,8 @@ in <dstore_dir> after the insertion of the current one.
 -> Every reference of every test set batch translated is inserted inside the datastore,
 to mimic a human feedback loop [assuming that there are test set references] as soon as it's
 machine translated.
--> The index and datastores are put on an 'on-the-fly' named folder inside 'dstore_dir'. To use this datastore
-on future runs just copy datastore and index to 'dstore_dir' after the run and delete on-the-fly.
+-> The index and datastores are put on an <on-the-fly> named folder inside <dstore_dir>. To use this datastore
+on future runs just copy datastore and index to <dstore_dir> after the run and delete on-the-fly.
 
 ```
   CUDA_VISIBLE_DEVICES=1 python -u run_translation.py  \
@@ -101,16 +108,17 @@ on future runs just copy datastore and index to 'dstore_dir' after the run and d
   --do_predict \
   --predict_with_generate \
   --source_prefix "translate English to Romanian: " \
-  --dstore_size 85108 \
+  --dstore_sizes [85108] --dstore_num 1 \
   --dstore_dir checkpoints-translation/t5-small \
-  --knn_temp 50 --k 16 --lmbda 0.25 \
+  --knn_temp 50 --k 16 --lmbdas [[0.25]] \
   --knn --on_the_fly
   ```
 
 ## 6) Add corrections to datastore
--> Provide the "corrections.'src'-'trg'.json" file (see dataset_preprocessing.py for more details about correct format) which should be inside of folder <corrections/>.
--> These corrections are added to the 'dstore_num' datastore in dstore_dir, overwritting it
+-> Provide the <corrections.'src'-'trg'.json> file (see dataset_preprocessing.py for more details about correct format) which should be inside of folder <corrections/>.
+-> These corrections are added to the <dstore_num> datastore in dstore_dir, overwritting it
 with new version with corrections included.
+-> <dstore_size> is the size of the current datastore being added.
 
 ```
   CUDA_VISIBLE_DEVICES=1 python -u run_translation.py  \
