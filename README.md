@@ -75,7 +75,7 @@ and target corpus respectively) to the following json format:
 ## 4) Inference using all datastores up to <dstore_num>
 -> <lmbdas> variable is of the following format: <[[λ1],[λ2],[λ3],...]> (no spaces) according to <dstore_num> (if <dstore_num> is 2, you must provide 'lmbdas' as <[[λ1],[λ2]]> )
 -> When inferring, use <dstore_sizes> (instead of <dstore_size>) in the format: <[size_ds1,size_ds2,size_ds3,...]>.
-```
+  ```
   CUDA_VISIBLE_DEVICES=1 python -u run_translation.py  \
   --model_name_or_path t5-small \
   --dataset_name wmt16 --dataset_config_name ro-en \
@@ -89,6 +89,19 @@ and target corpus respectively) to the following json format:
   --dstore_dir checkpoints-translation/t5-small \
   --knn_temp 50 --k 16 --lmbdas [[0.1],[0.8]] \
   --knn 
+  ```
+
+## 4.5) Inference using no datastore
+-> Just remove --knn flag.
+  ```
+  CUDA_VISIBLE_DEVICES=1 python -u run_translation.py  \
+  --model_name_or_path t5-small \
+  --dataset_name wmt16 --dataset_config_name ro-en \
+  --per_device_eval_batch_size=4 \
+  --output_dir checkpoints-translation/t5-small \
+  --source_lang en --target_lang ro \
+  --do_predict --predict_with_generate \
+  --source_prefix "translate English to Romanian: " 
   ```
 
 ## 5) Inference On-the-fly
