@@ -148,7 +148,7 @@ with new version with corrections included.
   ## Citation
 
 This repository implements:
--> [Nearest Neighbor Machine Translation: Nearest Neighbor Language Models](https://arxiv.org/abs/2010.00710)
+-> [Nearest Neighbor Machine Translation](https://arxiv.org/abs/2010.00710)
 ```
 @misc{khandelwalnnmt,
   doi = {10.48550/ARXIV.2010.00710},
