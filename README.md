@@ -1,5 +1,5 @@
 # On-the-fly Machine Translation
-Implemented the original vanilla kNN-MT (Khandelwal et al., 2021) algorithm with a few extensions.
+Implemented the original vanilla kNN-MT (Khandelwal et al., 2021)algorithm with a few extensions (Built upon the existing HuggingFace implementation cited below).
 
 <img
   src="https://github.com/jmrsf1/on-the-fly-mt/blob/main/images/on-the-fly.png"
