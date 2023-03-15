@@ -1,4 +1,5 @@
 # On-the-fly Machine Translation
+Implemented the original vanilla kNN-MT (Khandelwal et al., 2021) algorithm with a few extensions.
 
 <img
   src="https://github.com/jmrsf1/on-the-fly-mt/blob/main/images/on-the-fly.png"
@@ -6,7 +7,7 @@
   title="On-the-fly Machine Translation"
   style="display: block; width: 425px;">
 
-Added functionalities of using custom dataset, using and creating multiple datastores, perform on-the-fly machine translation (i.e., add a corrections dataset to one of the datastores) or perform a 'on-the-fly inference' which, for every performed translation, adds the correspondent references to the datastore on-the-fly to be applied when inference has a sequential nature.
+Added functionalities of using custom dataset (europarl for now), using and creating multiple datastores, perform on-the-fly adaptation through a feedback loop (i.e., add a custom dataset filled with useful corrections to one of the datastores in order for the system to learn "on-the-fly") or perform a 'on-the-fly inference' which, for every performed translation, adds the correspondent references to the datastore on-the-fly (useful when inference dataset has a sequential nature where future inputs are highly correlated with previous inputs).
 
 #### Multiple Datastores: 
 -> Create datastores offline (use <dstore_num> equal to 1 when creating the first datastore, <dstore_num> equal to 2 when creating the second one and so on). Different datastores will have this <dstore_num> variable in their name (serving as an index).
